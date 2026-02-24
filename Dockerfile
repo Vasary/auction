@@ -37,5 +37,6 @@ COPY --from=go-builder --chown=10001:10001 /out/healthcheck /app/healthcheck
 COPY --from=ui-builder --chown=10001:10001 /src/ui/dist /app/ui/dist
 USER 10001:10001
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD ["/app/healthcheck"]
 EXPOSE 8082
 ENTRYPOINT ["/app/auction-server"]
