@@ -1,0 +1,11 @@
+.git
+.gitignore
+.github
+node_modules
+ui/node_modules
+ui/dist
+coverage
+.tmp
+tmp
+*.log
+.DS_Store
