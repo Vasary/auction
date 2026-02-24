@@ -22,7 +22,7 @@ func (m *mockParticipantRepo) AddParticipant(ctx context.Context, tenderID, comp
 	return nil
 }
 func (m *mockParticipantRepo) IsParticipant(ctx context.Context, tenderID, companyID uuid.UUID) (bool, error) {
-	if companyID == uuid.MustParse("00000000-0000-0000-0000-000000000000") {
+	if companyID == uuid.MustParse("d53c7979-72b8-4bdf-bf52-c93f29916c1a") {
 		return false, nil
 	}
 	return true, nil
@@ -142,5 +142,70 @@ func TestWebSocketClient(t *testing.T) {
 		case <-timer.C:
 			t.Fatalf("expected EventPriceUpdated")
 		}
+	}
+}
+
+func TestWebSocketClientRejectsUnregisteredParticipant(t *testing.T) {
+	logger := zap.NewNop()
+	repo := &mockAuctionRepo{}
+	partRepo := &mockParticipantRepo{}
+
+	cfg := auction.Config{
+		TenderID:        uuid.MustParse("e13a2778-d1c3-4acf-a771-755ab3cdab4d"),
+		StartPrice:      1000,
+		CurrentPrice:    1000,
+		Step:            10,
+		StartAt:         time.Now().Add(-1 * time.Hour),
+		EndAt:           time.Now().Add(1 * time.Hour),
+		BroadcastBuffer: 1024,
+	}
+	session, _ := auction.NewSession(cfg, repo, nil, logger)
+	session.Start()
+	defer session.Stop()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.Upgrader{}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		client := NewClient(conn, session, partRepo, uuid.MustParse("e13a2778-d1c3-4acf-a771-755ab3cdab4d"), logger)
+		go client.Run()
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer ws.Close()
+
+	var snapshot auction.Event
+	if err := ws.ReadJSON(&snapshot); err != nil {
+		t.Fatalf("failed to read initial snapshot: %v", err)
+	}
+
+	bidMsg := incomingMessage{
+		Type:      "place_bid",
+		Bid:       990,
+		CompanyID: uuid.MustParse("d53c7979-72b8-4bdf-bf52-c93f29916c1a"),
+		PersonID:  uuid.MustParse("6179ac4e-b0c4-44ed-8b18-a616a16fb936"),
+	}
+	if err := ws.WriteJSON(bidMsg); err != nil {
+		t.Fatalf("failed to write bid: %v", err)
+	}
+
+	var result auction.BidResult
+	if err := ws.ReadJSON(&result); err != nil {
+		t.Fatalf("failed to read bid result: %v", err)
+	}
+
+	if result.Accepted {
+		t.Fatalf("expected bid to be rejected for unregistered participant")
+	}
+
+	if result.Error != "bid rejected: you are not registered as auction participant" {
+		t.Fatalf("unexpected error message: %q", result.Error)
 	}
 }
