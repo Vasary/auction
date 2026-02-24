@@ -18,6 +18,14 @@ export default function AuctionLogin({ onLogin }: LoginProps) {
     }
   }
 
+  const handleRandomLogin = () => {
+    const randomPersonId = crypto.randomUUID()
+    const randomCompanyId = crypto.randomUUID()
+    setPersonId(randomPersonId)
+    setCompanyId(randomCompanyId)
+    onLogin(randomPersonId, randomCompanyId)
+  }
+
   return (
     <div className="flex items-center justify-center min-h-[60vh]">
       <Card className="w-full max-w-md">
@@ -51,9 +59,14 @@ export default function AuctionLogin({ onLogin }: LoginProps) {
                 required
               />
             </div>
-            <Button type="submit" className="w-full">
-              Enter
-            </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="submit" className="w-full">
+                Enter
+              </Button>
+              <Button type="button" className="w-full" onClick={handleRandomLogin}>
+                Random Login
+              </Button>
+            </div>
           </form>
         </CardContent>
       </Card>
