@@ -18,6 +18,9 @@ ARG TARGETARCH
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags='-s -w' -o /out/auction-server ./cmd/server
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags='-s -w' -o /out/healthcheck ./cmd/healthcheck
 
 FROM alpine:3.21 AS runtime-deps
 RUN apk add --no-cache ca-certificates tzdata && \
@@ -30,6 +33,7 @@ COPY --from=runtime-deps /etc/group /etc/group
 COPY --from=runtime-deps /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=runtime-deps /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=go-builder --chown=10001:10001 /out/auction-server /app/auction-server
+COPY --from=go-builder --chown=10001:10001 /out/healthcheck /app/healthcheck
 COPY --from=ui-builder --chown=10001:10001 /src/ui/dist /app/ui/dist
 USER 10001:10001
 
