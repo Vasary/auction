@@ -160,9 +160,14 @@ func (c *Client) handlePlaceBid(msg incomingMessage) {
 		c.logger.Warn("bid rejected: company not allowed",
 			zap.String("company_id", msg.CompanyID.String()),
 		)
-		_ = c.writeJSON(auction.BidResult{
-			Accepted: false,
-			Error:    "bid rejected: you are not registered as auction participant",
+		_ = c.writeJSON(auction.Event{
+			Type:     auction.EventBidRejected,
+			TenderID: c.tenderID,
+			At:       time.Now(),
+			Payload: auction.BidRejection{
+				CompanyID: msg.CompanyID,
+				Reason:    "bid rejected: you are not registered as auction participant",
+			},
 		})
 		return
 	}

@@ -196,16 +196,22 @@ func TestWebSocketClientRejectsUnregisteredParticipant(t *testing.T) {
 		t.Fatalf("failed to write bid: %v", err)
 	}
 
-	var result auction.BidResult
-	if err := ws.ReadJSON(&result); err != nil {
-		t.Fatalf("failed to read bid result: %v", err)
+	var event auction.Event
+	if err := ws.ReadJSON(&event); err != nil {
+		t.Fatalf("failed to read bid rejection event: %v", err)
 	}
 
-	if result.Accepted {
-		t.Fatalf("expected bid to be rejected for unregistered participant")
+	if event.Type != auction.EventBidRejected {
+		t.Fatalf("expected %q event, got %q", auction.EventBidRejected, event.Type)
 	}
 
-	if result.Error != "bid rejected: you are not registered as auction participant" {
-		t.Fatalf("unexpected error message: %q", result.Error)
+	payload, ok := event.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected payload type: %T", event.Payload)
+	}
+
+	reason, _ := payload["reason"].(string)
+	if reason != "bid rejected: you are not registered as auction participant" {
+		t.Fatalf("unexpected error message: %q", reason)
 	}
 }
