@@ -32,6 +32,7 @@ const (
 )
 
 type LatestBid struct {
+	ID        int64
 	CompanyID uuid.UUID
 	PersonID  uuid.UUID
 	BidAmount int64
@@ -116,7 +117,7 @@ type AuctionsRepository interface {
 		companyID uuid.UUID,
 		personID uuid.UUID,
 		amount int64,
-	) error
+	) (int64, error)
 }
 
 type PersistedAuction struct {

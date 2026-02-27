@@ -33,6 +33,7 @@ type AuctionStartedEvent struct {
 }
 
 type WinningBid struct {
+	ID        int64     `json:"id"`
 	BidAmount int64     `json:"bidAmount"`
 	PersonID  uuid.UUID `json:"personId"`
 	BidAt     time.Time `json:"bidAt"`
@@ -74,6 +75,7 @@ func (p *AuctionEventPublisher) PublishAuctionFinished(tenderID uuid.UUID, snaps
 		CurrentPrice:    snapshot.CurrentPrice,
 		WinnerCompanyID: snapshot.WinnerID,
 		WinningBid: WinningBid{
+			ID:        snapshot.LatestBid.ID,
 			BidAmount: snapshot.LatestBid.BidAmount,
 			PersonID:  snapshot.LatestBid.PersonID,
 			BidAt:     snapshot.LatestBid.BidAt,

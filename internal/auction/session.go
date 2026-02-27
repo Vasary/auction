@@ -382,7 +382,8 @@ func (s *Session) handleBid(cmd bidCmd) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := s.auctionsRepository.CreateBidTx(ctx, s.cfg.TenderID, cmd.companyID, cmd.personID, cmd.bidAmount); err != nil {
+	bidID, err := s.auctionsRepository.CreateBidTx(ctx, s.cfg.TenderID, cmd.companyID, cmd.personID, cmd.bidAmount)
+	if err != nil {
 		s.logger.Error("failed to create bid", zap.Error(err))
 		cmd.replyCh <- BidResult{Accepted: false, Error: "failed to persist bid"}
 		return
@@ -394,6 +395,7 @@ func (s *Session) handleBid(cmd bidCmd) {
 	s.winnerID = &winnerID
 	s.updatedAt = now
 	s.latestBid = LatestBid{
+		ID:        bidID,
 		CompanyID: cmd.companyID,
 		PersonID:  cmd.personID,
 		BidAmount: cmd.bidAmount,
@@ -477,6 +479,7 @@ func (s *Session) makeSnapshot(at time.Time) Snapshot {
 		EndAt:        s.cfg.EndAt,
 		UpdatedAt:    at,
 		LatestBid: LatestBid{
+			ID:        s.latestBid.ID,
 			CompanyID: s.latestBid.CompanyID,
 			PersonID:  s.latestBid.PersonID,
 			BidAmount: s.latestBid.BidAmount,

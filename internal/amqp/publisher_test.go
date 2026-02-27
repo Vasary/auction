@@ -56,6 +56,7 @@ func TestAuctionEventPublisher_PublishAuctionFinished(t *testing.T) {
 		CurrentPrice: 150,
 		WinnerID:     &winnerID,
 		LatestBid: auction.LatestBid{
+			ID:        42,
 			BidAmount: 150,
 			PersonID:  uuid.MustParse("00000000-0000-0000-0000-000000000704"),
 			BidAt:     time.Now(),
@@ -67,6 +68,7 @@ func TestAuctionEventPublisher_PublishAuctionFinished(t *testing.T) {
 	mockPub.On("Publish", "auction.finished", mock.MatchedBy(func(event AuctionFinishedEvent) bool {
 		return event.TenderID == tenderID &&
 			event.WinnerCompanyID == snapshot.WinnerID &&
+			event.WinningBid.ID == snapshot.LatestBid.ID &&
 			event.WinningBid.BidAmount == snapshot.LatestBid.BidAmount
 	})).Return(nil)
 

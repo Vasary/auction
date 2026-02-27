@@ -28,7 +28,7 @@ func (r *PostgresRepository) CreateBidTx(
 	companyID uuid.UUID,
 	personID uuid.UUID,
 	amount int64,
-) (err error) {
+) (_ int64, err error) {
 	started := time.Now()
 	defer func() {
 		metrics.ObserveDBQuery("create_bid_tx", started, err)
@@ -36,7 +36,7 @@ func (r *PostgresRepository) CreateBidTx(
 
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback(ctx)
 
@@ -47,7 +47,7 @@ func (r *PostgresRepository) CreateBidTx(
 		RETURNING id
 	`, tenderID, companyID, personID, amount).Scan(&bidID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -59,10 +59,14 @@ func (r *PostgresRepository) CreateBidTx(
 		WHERE tender_id = $4
 	`, amount, companyID, bidID, tenderID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+
+	return bidID, nil
 }
 
 func (r *PostgresRepository) Create(ctx context.Context, a *auction.PersistedAuction) error {

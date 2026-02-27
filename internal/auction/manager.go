@@ -223,6 +223,7 @@ func (m *Manager) RecoverSessions(
 
 			cfg.CurrentPrice = b.BidAmount
 			cfg.LatestBid = LatestBid{
+				ID:        b.ID,
 				CompanyID: b.CompanyID,
 				PersonID:  b.PersonID,
 				BidAmount: b.BidAmount,

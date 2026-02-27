@@ -48,8 +48,8 @@ func (m *mockAuctionRepo) FindStartingBetween(ctx context.Context, from, to time
 func (m *mockAuctionRepo) List(ctx context.Context) ([]auction.PersistedAuction, error) {
 	return nil, nil
 }
-func (m *mockAuctionRepo) CreateBidTx(ctx context.Context, tenderID, companyID, personID uuid.UUID, amount int64) error {
-	return nil
+func (m *mockAuctionRepo) CreateBidTx(ctx context.Context, tenderID, companyID, personID uuid.UUID, amount int64) (int64, error) {
+	return 1, nil
 }
 
 func TestWebSocketClient(t *testing.T) {

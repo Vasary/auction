@@ -16,6 +16,7 @@ func testUUID(v string) uuid.UUID {
 
 type mockRepo struct {
 	auctions []PersistedAuction
+	nextBidID int64
 }
 
 func (m *mockRepo) Create(ctx context.Context, a *PersistedAuction) error { return nil }
@@ -152,12 +153,20 @@ func TestRecoveryWithWinner(t *testing.T) {
 	if snap.WinnerID == nil || *snap.WinnerID != winnerID {
 		t.Errorf("expected winner %s, got %v", winnerID, snap.WinnerID)
 	}
+	if snap.LatestBid.ID != bidID {
+		t.Errorf("expected latest bid ID %d, got %d", bidID, snap.LatestBid.ID)
+	}
 }
 func (m *mockRepo) List(ctx context.Context) ([]PersistedAuction, error) {
 	return []PersistedAuction{}, nil
 }
-func (m *mockRepo) CreateBidTx(ctx context.Context, tenderID, companyID, personID uuid.UUID, amount int64) error {
-	return nil
+func (m *mockRepo) CreateBidTx(ctx context.Context, tenderID, companyID, personID uuid.UUID, amount int64) (int64, error) {
+	if m.nextBidID == 0 {
+		m.nextBidID = 1
+	}
+	bidID := m.nextBidID
+	m.nextBidID++
+	return bidID, nil
 }
 
 type mockPublisher struct{}
@@ -223,6 +232,9 @@ func TestAuctionSessionFlow(t *testing.T) {
 
 	if session.currentPrice != 900 {
 		t.Errorf("expected price 900, got %d", session.currentPrice)
+	}
+	if session.latestBid.ID != 1 {
+		t.Errorf("expected latest bid ID 1, got %d", session.latestBid.ID)
 	}
 
 	res = session.PlaceBid(testUUID("00000000-0000-0000-0000-000000000202"), testUUID("00000000-0000-0000-0000-000000000302"), 950)
