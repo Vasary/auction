@@ -114,6 +114,7 @@ http://localhost:8082/ui
 The repository includes a small Makefile for common workflows:
 
 ```bash
+make help          # show available targets
 make test          # run Go tests
 make build-ui      # install UI dependencies and build the React app
 make run-server    # run the Go server
