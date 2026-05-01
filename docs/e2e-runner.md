@@ -1,131 +1,131 @@
-# E2E Runner (UI)
+# E2E Runner
 
-## 1. Назначение
+The E2E Runner is a browser-based functional test tool available in the developer UI at `/ui/e2e`. It exercises the running backend through HTTP and WebSocket APIs, then verifies that live events, final auction state, and persisted bid history agree.
 
-`E2E Runner` на странице `/ui/e2e` выполняет функциональный сценарий поверх уже запущенного backend:
+## Purpose
 
-1. Создает несколько аукционов через HTTP.
-2. Регистрирует участников.
-3. Подключает несколько WebSocket-клиентов на каждый аукцион.
-4. Отправляет ставки.
-5. Дожидается завершения аукциона.
-6. Валидирует финальное состояние (`winnerId`, `currentPrice`, история ставок, статус).
+The runner is built to validate behavior, not just availability.
 
-Главная цель: проверить бизнес-логику и консистентность состояния, а не только доступность API.
+It checks that:
 
-## 2. Где находится код
+- Auctions can be created through the API.
+- Participants can be registered.
+- Multiple WebSocket clients can connect to each auction.
+- Bids are accepted or rejected according to domain rules.
+- Final `winnerId` and `currentPrice` match the accepted bid stream.
+- Persisted bid history matches the backend's final auction state.
 
-- UI-страница: `ui/src/pages/E2ERunnerPage.tsx`
-- Основная логика сценария: `ui/src/components/E2ERunnerPanel.tsx`
+## Source Files
 
-## 3. Как симулируются "много клиентов"
+| File | Responsibility |
+|---|---|
+| `ui/src/pages/E2ERunnerPage.tsx` | Page route and layout |
+| `ui/src/components/E2ERunnerPanel.tsx` | Scenario orchestration, WebSocket clients, result validation |
 
-Для каждого аукциона создается `clientsPerAuction` виртуальных участников.
+## Multi-Client Simulation
 
-Для каждого участника:
+For each auction, the runner creates `clientsPerAuction` virtual participants.
 
-1. Генерируется `companyId` и `personId`.
-2. Компания регистрируется через `POST /auctions/{tenderId}/participate`.
-3. Открывается отдельный `WebSocket` на `/ws/{tenderId}`.
+For every participant it:
 
-Именно отдельный сокет на участника и есть симуляция параллельных пользователей в браузере.
+1. Generates a `companyId` and `personId`.
+2. Registers the company through `POST /auctions/{tenderId}/participate`.
+3. Opens a dedicated WebSocket connection to `/ws/{tenderId}`.
 
-## 4. Тайминг и UTC
+Separate sockets are what make the scenario useful: the backend sees independent clients, not one script pretending after the fact.
 
-Все даты отправляются в backend строго в UTC (`toISOString()`):
+## Time Handling
+
+All timestamps are sent to the backend in UTC with `toISOString()`.
+
+The scenario records UTC values for:
 
 - `startAt`
 - `endAt`
 
-В отчете также фиксируются UTC-метки, чтобы не было расхождений из-за локального timezone браузера.
+This avoids browser timezone ambiguity when comparing expected and actual results.
 
-## 5. Что делает один сценарий по аукциону
+## Scenario Flow
 
-Для каждого аукциона:
+For each generated auction, the runner:
 
-1. Вычисляются `startAt/endAt`:
-   - часть аукционов стартует "сейчас",
-   - часть со сдвигом `startDelaySec`,
-   - длительность берется из `shortDurationSec`/`longDurationSec`.
-2. Отправляется `POST /auctions`.
-3. Регистрируются участники (`participate`).
-4. Подключаются WS-клиенты.
-5. Скрипт дожидается старта аукциона.
-6. Отправляются ставки раундами (`bidRounds`) с паузой `bidIntervalMs`.
-7. Во время WS-обмена собирается ожидаемый результат:
-   - `expectedWinnerId`
-   - `expectedCurrentPrice`
-   на основе `bid_result` с `accepted=true`.
-8. Периодически опрашивается `GET /auctions/{tenderId}` до статуса `Finished` (или timeout).
-9. Загружается история ставок `GET /auctions/{tenderId}/bids`.
-10. Проводится валидация, формируется `passed/reasons`.
+1. Computes `startAt` and `endAt`.
+2. Creates the auction with `POST /auctions`.
+3. Registers all participants.
+4. Connects all WebSocket clients.
+5. Waits until the auction is active.
+6. Sends bids in rounds using `bidRounds` and `bidIntervalMs`.
+7. Tracks accepted `bid_result` events to compute expected final state.
+8. Polls `GET /auctions/{tenderId}` until the auction is `Finished` or times out.
+9. Loads persisted bids with `GET /auctions/{tenderId}/bids`.
+10. Compares expected state, persisted state, and final auction state.
 
-## 6. Что считается валидным (passed)
+## Pass Criteria
 
-Аукцион считается `passed`, только если нет ни одной причины ошибки.
+An auction passes only when no validation reason is recorded.
 
-Проверки:
+The runner verifies:
 
-1. Аукцион дошел до `status=Finished`.
-2. Подключился хотя бы 1 WS-клиент (`wsConnected > 0`).
-3. Подключилось ровно ожидаемое количество клиентов (`wsConnected == clientsPerAuction`).
-4. Была хотя бы одна попытка ставки (`bidsAttempted > 0`).
-5. Был хотя бы один `bid_result` с `accepted=true` (`bidsAccepted > 0`).
-6. В backend сохранилась хотя бы одна ставка (`bidsPersisted > 0`).
-7. История ставок строго убывает по цене.
-8. Разница между соседними ставками кратна `step`.
-9. Если есть `accepted`-ставки, вычисленный `expectedWinnerId/expectedCurrentPrice` должен существовать.
-10. `expectedWinnerId` совпадает с компанией последней ставки из `/bids`.
-11. `expectedCurrentPrice` совпадает с суммой последней ставки из `/bids`.
-12. `winnerId` из `GET /auctions/{id}` совпадает с компанией последней ставки.
-13. `currentPrice` из `GET /auctions/{id}` совпадает с суммой последней ставки.
-14. `winnerId/currentPrice` из `GET /auctions/{id}` совпадают с `expectedWinnerId/expectedCurrentPrice`.
+- The auction reached `status=Finished`.
+- At least one WebSocket client connected.
+- Exactly `clientsPerAuction` clients connected.
+- At least one bid attempt was made.
+- At least one bid was accepted.
+- At least one bid was persisted.
+- Persisted bids strictly decrease by price.
+- Differences between persisted bids follow the configured step.
+- Expected winner and price exist when accepted bids exist.
+- Expected winner matches the last persisted bid company.
+- Expected price matches the last persisted bid amount.
+- Final `winnerId` matches the last persisted bid company.
+- Final `currentPrice` matches the last persisted bid amount.
+- Final state matches the expected state computed from accepted bid results.
 
-## 7. Почему раньше могли быть "ложные успехи"
+## Result Fields
 
-Если критерии мягкие, сценарий мог отмечаться успешным даже при:
+Each auction result includes:
 
-- `wsConnected = 0`
-- `bidsPersisted = 0`
-- отсутствии принятых ставок
+| Field | Meaning |
+|---|---|
+| `tenderId` | Auction ID |
+| `startAt`, `endAt` | UTC schedule used by the test |
+| `wsConnected` | Number of connected WebSocket clients |
+| `expectedWinnerId` | Winner computed from accepted bid results |
+| `expectedCurrentPrice` | Price computed from accepted bid results |
+| `bidsAttempted` | Number of bid attempts sent |
+| `bidsAccepted` | Number of accepted bid results observed |
+| `bidsPersisted` | Number of bids returned by the backend history endpoint |
+| `winnerId` | Final winner returned by the auction endpoint |
+| `currentPrice` | Final price returned by the auction endpoint |
+| `status` | Final auction status |
+| `passed` | Whether all checks passed |
+| `reasons[]` | Validation failures, if any |
 
-Теперь эти случаи дают `failed` с явной причиной в `reasons`.
+## Why Strict Checks Matter
 
-## 8. Поля результата
+Soft E2E checks can produce false confidence. A scenario that creates auctions but connects zero WebSocket clients, persists zero bids, or never observes an accepted bid should not be considered successful.
 
-По каждому аукциону выводятся:
+The runner treats those cases as failures and explains why in `reasons[]`.
 
-- `tenderId`
-- `startAt`, `endAt` (UTC)
-- `wsConnected`
-- `expectedWinnerId`
-- `expectedCurrentPrice`
-- `bidsAttempted`
-- `bidsAccepted`
-- `bidsPersisted`
-- `winnerId`
-- `currentPrice`
-- `status`
-- `passed`
-- `reasons[]`
+## Practical Settings
 
-## 9. Ограничения сценария
+A stable local run usually starts with:
 
-1. Это браузерный функциональный тест, а не нагрузочный инструмент уровня k6/JMeter.
-2. Большие значения `auctionsCount * clientsPerAuction` могут упираться в лимиты браузера/машины.
-3. Тест выполняется с учетом реального времени, поэтому чувствителен к сетевым задержкам и нагрузке на backend/DB.
-4. При слишком маленьком `bidIntervalMs` ставки могут отклоняться из-за rate-limit на backend.
+| Setting | Value |
+|---|---|
+| `auctionsCount` | `4` |
+| `clientsPerAuction` | `3..4` |
+| `startDelaySec` | `30..60` |
+| `shortDurationSec` | `60` |
+| `longDurationSec` | `120` |
+| `bidRounds` | `2..3` |
+| `bidIntervalMs` | `>= 550` when backend rate limit is near 500ms |
 
-## 10. Практические рекомендации
+For stress exploration, change one dimension at a time. Increasing auctions, clients, bid rounds, and interval pressure together makes it harder to identify the actual bottleneck.
 
-Базовый стабильный прогон:
+## Limitations
 
-- `auctionsCount = 4`
-- `clientsPerAuction = 3..4`
-- `startDelaySec = 30..60`
-- `shortDurationSec = 60`
-- `longDurationSec = 120`
-- `bidRounds = 2..3`
-- `bidIntervalMs >= 550` (если backend rate limit около 500ms на участника)
-
-Если хотите тестировать именно отказоустойчивость и предельные режимы, постепенно увеличивайте только один параметр за раз.
+- This is a functional browser runner, not a replacement for k6, JMeter, or dedicated load testing.
+- Large `auctionsCount * clientsPerAuction` values can hit browser or local machine limits.
+- The scenario uses real time, so it is sensitive to backend, DB, RabbitMQ, and network delays.
+- Very low `bidIntervalMs` values may intentionally trigger backend rate limits.

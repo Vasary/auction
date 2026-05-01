@@ -1,87 +1,150 @@
-# Бизнес-правила и проверки — Система Аукционов
+# Business Rules
 
-В данном документе собраны все ключевые бизнес-правила, ограничения и логика проверок, которые применяются в системе аукционов как на стороне Backend, так и на стороне Frontend.
+This document is the source of truth for auction behavior. The backend enforces these rules even when clients race, reconnect, or submit malformed data. The frontend mirrors part of the validation only to improve the user experience.
 
-## 1. Модель аукциона
-Система реализует **голландский аукцион (редукцион)** — аукцион на понижение цены. 
-- **Тип**: Редукцион (на понижение).
-- **Цель**: Найти участника, предложившего минимальную цену.
-- **Победитель**: Последний участник, сделавший валидную ставку (наименьшую на текущий момент).
-- **Правило снижения**: Каждая последующая ставка должна быть **строго меньше** текущей установленной цены.
+## Auction Type
 
-## 2. Формат данных и идентификаторы
+Auction Core implements a reverse auction.
 
-### 2.1. Идентификаторы (UUID)
-Все основные сущности в системе идентифицируются с помощью **UUID v4**. 
-- `tenderId` — идентификатор аукциона.
-- `companyId` — идентификатор компании-участника.
-- `personId` — идентификатор конкретного пользователя, совершающего действие от лица компании.
+| Rule | Description |
+|---|---|
+| Direction | Prices move downward |
+| Winner | The company behind the last accepted, lowest bid |
+| Price rule | A new bid must be strictly lower than the current price |
+| Step rule | The decrease must match the configured auction step |
+| Finality | Once an auction is finished, no further bids are accepted |
 
-Использование UUID обеспечивает уникальность идентификаторов между различными сервисами и фронтендом.
+## Identifiers
 
-### 2.2. Денежные значения (Минорные единицы)
-Для исключения ошибок округления, связанных с представлением чисел с плавающей точкой (float/double), все денежные значения передаются и хранятся исключительно в **минорных единицах** (целые числа).
-- **Тип данных**: `int64` (Backend) / `number` (Frontend).
-- **Пример**: Если валюта — российский рубль, то `10050` означает `100 рублей 50 копеек`.
-- **Конвертация**: Отображение в привычном формате (с разделителем) происходит только на уровне пользовательского интерфейса.
+All public IDs are UUIDs.
 
-## 3. Правила совершения ставок и валидация
+| Field | Meaning |
+|---|---|
+| `tenderId` | Auction identifier |
+| `companyId` | Company participating in the auction |
+| `personId` | Person acting on behalf of the company |
 
-При получении новой ставки сервер выполняет строгий цикл проверок (валидаций) в указанном порядке. Если любая проверка не проходит, ставка отклоняется.
+The HTTP layer rejects malformed UUIDs before they reach the domain code. WebSocket bid messages are also validated before the session attempts to process them.
 
-### 3.1. Предварительная валидация (WS Client)
-Перед обработкой самой ставки проверяется корректность входящего сообщения:
-1. **Полнота данных**: Обязательное наличие `companyId` и `personId`.
-2. **Проверка участника**: Компания должна быть зарегистрирована в аукционе (участие подтверждено через эндпоинт `/participate`).
+## Money Representation
 
-### 3.2. Основная валидация (Auction Session)
-После прохождения предварительных проверок ставка попадает в ядро сессии, где выполняются следующие шаги:
+All prices, steps, and bids are represented as integer minor units.
 
-#### 3.2.1. Статус аукциона
-- **Проверка**: Статус должен быть равен `Active`.
-- **Ошибка**: Если статус `Scheduled` или `Finished`, ставка отклоняется.
+Examples:
 
-#### 3.2.2. Частота ставок (Rate Limiting)
-- **Проверка**: Проверяется время последней успешной ставки от данной компании.
-- **Интервал**: Настраиваемый параметр (по умолчанию 2 секунды).
-- **Ошибка**: Если интервал не выдержан, возвращается `rate_limit_exceeded`.
+| Human value | Minor-unit value |
+|---|---:|
+| `100.00` | `10000` |
+| `100.50` | `10050` |
+| `1.00` | `100` |
 
-#### 3.2.3. Правило голландского аукциона (Снижение цены)
-- **Проверка**: Новая ставка должна быть **строго меньше** текущей цены.
-- **Условие**: `NewBid < CurrentPrice`.
-- **Ошибка**: Если ставка больше или равна текущей цене, возвращается `bid_must_be_lower`.
+The backend uses integer arithmetic for bid validation. Formatting into major units is a UI concern.
 
-#### 3.2.4. Правила шага аукциона (Step Alignment)
-- **Снижение**: Разница должна быть не меньше установленного шага (`CurrentPrice - NewBid >= Step`).
-- **Кратность**: Разница должна быть кратна шагу (`(CurrentPrice - NewBid) % Step == 0`).
-- **Ошибка**: При нарушении любого из условий возвращается `bid_not_aligned_with_step`.
+## Auction Statuses
 
-### 3.3. Сохранение и фиксация
-Если все проверки пройдены:
-1. Ставка записывается в БД (транзакционно).
-2. Обновляется текущая цена и победитель в оперативной памяти сессии.
-3. Рассылается событие `price_updated` всем участникам.
+| Status | Meaning | Bid Acceptance |
+|---|---|---|
+| `Scheduled` | Auction exists but has not started | Rejected |
+| `Active` | Auction is open for bidding | Accepted if all rules pass |
+| `Finished` | Auction is closed and final state is fixed | Rejected |
 
-## 4. Жизненный цикл аукциона
+## Bid Validation Pipeline
 
-1. **Scheduled**: Аукцион создан, но время начала еще не наступило. Ставки не принимаются.
-2. **Active**: Время начала наступило. Аукцион открыт для ставок.
-3. **Finished**: Время завершения наступило или аукцион был закрыт принудительно. Ставки больше не принимаются, фиксируется финальный победитель.
+The server processes every bid through a fixed validation sequence.
 
-## 5. Конкурентность и гонки (Race Conditions)
+### 1. Message Shape
 
-Система оптимизирована для работы в условиях высокой конкуренции:
-- Вся логика проверок и обновления цены выполняется **последовательно** в рамках сессии в оперативной памяти (single-threaded loop для каждой сессии).
-- Это гарантирует, что если два участника отправят ставку одновременно, они будут обработаны по очереди.
-- Если второй участник отправил ставку на ту же сумму, что и первый (или больше), его ставка будет отклонена правилом `NewBid < CurrentPrice`, так как цена уже обновилась первой ставкой.
+The incoming WebSocket message must contain:
 
-## 6. Обработка ошибок (Error Codes)
+- `type: "place_bid"`
+- `bid`
+- `companyId`
+- `personId`
 
-При отклонении ставки сервер возвращает JSON с полем `error`, содержащим один из следующих кодов:
-- `auction_not_active`: Аукцион не в статусе Active (еще не начат или уже завершен).
-- `bid_must_be_lower`: Ставка не ниже текущей цены (нарушение правила голландского аукциона).
-- `bid_not_aligned_with_step`: Нарушено правило минимального шага или кратности снижения.
-- `rate_limit_exceeded`: Слишком частые ставки от одного участника (не выдержан интервал).
-- `not_a_participant`: Компания не зарегистрирована в аукционе.
-- `missing company_id or person_id`: Некорректные данные во входящем WebSocket сообщении.
-- `failed to persist bid`: Ошибка записи в базу данных.
+Missing identity fields are rejected before domain processing.
+
+### 2. Participant Check
+
+The company must be registered for the auction through:
+
+```http
+POST /auctions/{tenderId}/participate
+```
+
+Unregistered companies receive `not_a_participant`.
+
+### 3. Active Auction Check
+
+Only active auctions accept bids. Scheduled or finished auctions reject bids with an active-state error.
+
+### 4. Per-Company Rate Limit
+
+The session tracks the last successful bid time for each company. If a company submits another bid too quickly, the bid is rejected with `rate_limit_exceeded`.
+
+### 5. Reverse-Auction Price Rule
+
+The new bid must be strictly lower than the current price:
+
+```text
+newBid < currentPrice
+```
+
+If the bid is equal to or greater than the current price, it is rejected with `bid_must_be_lower`.
+
+### 6. Step Alignment
+
+The decrease must be large enough and aligned with the configured step:
+
+```text
+currentPrice - newBid >= step
+(currentPrice - newBid) % step == 0
+```
+
+Violations are rejected with `bid_not_aligned_with_step`.
+
+### 7. Persistence
+
+After all domain checks pass, the bid is written to PostgreSQL. If persistence fails, the bid is rejected with `failed to persist bid`.
+
+### 8. State Update and Broadcast
+
+Only after persistence succeeds does the session:
+
+1. Update `currentPrice`.
+2. Update `winnerId`.
+3. Store the latest bid in memory.
+4. Broadcast `price_updated`.
+5. Return an accepted `BidResult`.
+
+## Concurrency Model
+
+Each active auction is coordinated by one session. Bids for the same auction are processed through that session in deterministic order.
+
+If two participants submit the same price at nearly the same time, one bid is processed first. The second bid is then compared against the updated current price and is rejected because it is no longer lower.
+
+This approach keeps the business rules simple and protects the auction from race-condition winners.
+
+## Error Reasons
+
+| Reason | Meaning |
+|---|---|
+| `auction not active` | Auction is scheduled or otherwise not accepting bids |
+| `auction finished` | Auction is already closed |
+| `bid must be lower than current price` | Bid is not strictly lower than the current price |
+| `bid not aligned with step` | Bid decrease does not satisfy the step rules |
+| `rate limit exceeded` | Company submitted accepted bids too frequently |
+| `not_a_participant` | Company is not registered for the auction |
+| `missing company_id or person_id` | WebSocket message does not contain required identity fields |
+| `bid must be at least 1` | Bid amount is non-positive |
+| `failed to persist bid` | The bid could not be saved |
+
+## Client Responsibilities
+
+Clients should validate obvious mistakes before sending a bid, but the backend remains authoritative. A client may believe a bid is valid while another user has already lowered the price. In that case, the server rejection is correct and expected.
+
+Recommended client behavior:
+
+- Always render the latest `snapshot` or `price_updated` event.
+- Treat rejected bids as normal business outcomes.
+- Disable bid entry after `finished`.
+- Reconnect and request fresh state after network interruptions.

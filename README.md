@@ -1,55 +1,135 @@
-# Система Аукционов (Auction Core)
+# Auction Core
 
-Добро пожаловать в проект системы аукционов. Проект разделен на серверную часть (Backend) и клиентскую часть (Frontend).
+[![CI](https://github.com/Vasary/auction/actions/workflows/container.yml/badge.svg?branch=main)](https://github.com/Vasary/auction/actions/workflows/container.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Vasary/auction)](https://goreportcard.com/report/github.com/Vasary/auction)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/Vasary/auction?filename=go.mod)](go.mod)
 
-## Оглавление базы знаний
+Auction Core is a production-minded Go service for real-time reverse auctions. It combines a clean domain core, WebSocket bidding, PostgreSQL persistence, RabbitMQ domain events, Prometheus metrics, and a React developer console for manual and functional testing.
 
-### 1. [Процесс (Flow) и Developer UI](docs/flow.md)
-Описание основного жизненного цикла аукциона и возможностей встроенного интерфейса.
+The project is designed as a portfolio-grade example of backend engineering in Go: explicit business rules, deterministic validation, observable runtime behavior, focused tests, and a Docker-ready delivery pipeline.
 
-### 2. [Бизнес-правила и проверки](docs/business-rules.md)
-Единый источник истины по логике работы аукциона: UUID, минорные единицы, правила ставок и валидации.
+## Highlights
 
-### 3. [Backend Документация (Go)](docs/backend.md)
-Подробное описание архитектуры сервера, WebSocket протокола и HTTP API.
+- Real-time reverse auction engine with in-memory sessions and persisted bid history.
+- Strong domain boundaries around auction lifecycle, bidding, participants, storage, transport, and scheduling.
+- WebSocket protocol for live snapshots, bid results, price updates, and final state broadcasts.
+- PostgreSQL repositories built on `pgx`.
+- RabbitMQ publishing for auction lifecycle events.
+- Prometheus metrics for HTTP, WebSocket, bid outcomes, DB operations, scheduler activity, AMQP, and runtime state.
+- React + TypeScript developer UI served by the Go application.
+- Browser-based E2E runner that simulates multiple auctions and multiple WebSocket clients.
+- GitHub Actions CI that runs Go tests before building and publishing a container image.
 
-### 4. [Frontend Документация (React)](docs/frontend.md)
-Описание клиентской логики, взаимодействия с WebSocket и UI-компонентов.
+## Architecture
 
-### 5. [Использование Makefile](#использование-makefile)
-Описание основных команд для сборки и запуска проекта локально.
+```text
+cmd/server              application entrypoint and dependency wiring
+internal/auction        domain model, manager, in-memory sessions, bidding rules
+internal/http           REST API, WebSocket endpoint, static UI serving
+internal/scheduler      scheduled auction activation
+internal/db             PostgreSQL pool setup
+internal/auction/repository/postgres
+                        pgx-backed persistence
+internal/amqp           RabbitMQ connection and event publishing
+internal/metrics        Prometheus instrumentation
+ui                      React + TypeScript developer console
+docs                    architecture, business rules, metrics, and testing docs
+```
 
-### 6. [Метрики и Observability](docs/metrics.md)
-Полный справочник по Prometheus-метрикам, перцентилям, label'ам, PromQL и рекомендациям по алертам.
+## Documentation
 
----
+- [System Flow and Developer UI](docs/flow.md)
+- [Business Rules](docs/business-rules.md)
+- [Backend Architecture](docs/backend.md)
+- [Frontend Developer Console](docs/frontend.md)
+- [Metrics and Observability](docs/metrics.md)
+- [E2E Runner](docs/e2e-runner.md)
 
-## Основные концепции системы
+## Core Concepts
 
-1.  **Редукционная модель**: Аукцион работает на понижение цены. Каждая новая ставка должна быть строго ниже текущей.
-2.  **Минорные единицы**: Все денежные расчеты (цены, шаги, ставки) ведутся в минимальных целых единицах (например, копейки).
-    - *Пример*: 100 рублей = `10000`.
-3.  **Идентификаторы (ID)**: Все идентификаторы тендеров, компаний и пользователей должны соответствовать формату **UUID**.
-4.  **Real-time взаимодействие**: Основной обмен данными между участниками и сервером происходит через **WebSocket**.
+Auction Core implements reverse auctions: every accepted bid must lower the current price by an allowed step. All money values are stored as integer minor units, so the backend never depends on floating-point arithmetic for price decisions.
 
-## Быстрый старт
+All public identifiers use UUIDs:
 
-### Требования
-- Go 1.22+ (для локальной разработки)
-- Node.js 18+ (для локальной разработки фронтенда)
+- `tenderId` identifies an auction.
+- `companyId` identifies a participating company.
+- `personId` identifies the person acting for that company.
 
-## Использование Makefile
+## HTTP and WebSocket Surface
 
-Для удобства разработки в корне проекта находится `Makefile`, который содержит команды для сборки и запуска:
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | Liveness check |
+| `GET` | `/metrics` | Prometheus metrics |
+| `POST` | `/auctions` | Create an auction |
+| `GET` | `/auctions` | List auctions |
+| `GET` | `/auctions/{tenderId}` | Get one auction |
+| `PATCH` | `/auctions/{tenderId}` | Update a scheduled auction |
+| `DELETE` | `/auctions/{tenderId}` | Delete a scheduled auction |
+| `POST` | `/auctions/{tenderId}/participate` | Register a company as a participant |
+| `GET` | `/auctions/{tenderId}/bids` | Read bid history |
+| `GET` | `/ws/{tenderId}` | Join the real-time auction stream |
+| `GET` | `/ui` | Developer console |
 
-- `make build-ui` — Сборка фронтенд части (установка зависимостей и `npm run build`).
-- `make run-server` — Запуск бэкенда на Go.
-- `make run` — Полный цикл: сборка фронтенда и запуск сервера.
-- `make docker-build` — Сборка Docker-образа проекта.
+## Quick Start
 
-**Важно**: В `Makefile` прописаны значения по умолчанию для `DATABASE_URL` и `AMQP_URL`, которые используются при локальном запуске через `go run`.
+### Requirements
 
----
+- Go 1.25+
+- PostgreSQL
+- RabbitMQ
+- Node.js 18+ when rebuilding the UI locally
 
-## Разработчики и поддержка
-Проект следует принципам чистой архитектуры и типизации для обеспечения масштабируемости и надежности.
+### Run Tests
+
+```bash
+go test ./...
+```
+
+### Run Locally
+
+Set the required infrastructure URLs:
+
+```bash
+export DATABASE_URL='postgres://auction:password@localhost:5432/auction_db?sslmode=disable'
+export AMQP_URL='amqp://rabbit:password@localhost:5672/'
+export PORT=8082
+```
+
+Start the server:
+
+```bash
+go run ./cmd/server
+```
+
+The developer UI is available at:
+
+```text
+http://localhost:8082/ui
+```
+
+### Makefile
+
+The repository includes a small Makefile for common workflows:
+
+```bash
+make test          # run Go tests
+make build-ui      # install UI dependencies and build the React app
+make run-server    # run the Go server
+make run           # build UI, then run the server
+make docker-build  # build the Docker image
+```
+
+## CI and Delivery
+
+The `Container` GitHub Actions workflow runs on pushes and pull requests for `main` and `master`. It executes `go test ./...` first; the container build only runs after the test job succeeds. On non-PR events, the Docker image is published to GitHub Container Registry with branch, tag, semantic version, SHA, and `latest` tags where applicable.
+
+## Why This Project Matters
+
+This codebase demonstrates practical backend engineering beyond CRUD:
+
+- Stateful real-time coordination with deterministic ordering per auction session.
+- Domain-level validation that protects the system even when clients race or reconnect.
+- Persistence and live broadcasts kept consistent through one bidding path.
+- Operational visibility built into the service rather than bolted on later.
+- A developer console and E2E runner that make the system easy to inspect and demo.
