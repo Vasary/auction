@@ -199,36 +199,9 @@ func (s *Session) ConnectionsCount() int {
 func (s *Session) run() {
 	defer close(s.done)
 
-	now := time.Now()
-
-	switch {
-	case now.Before(s.cfg.StartAt):
-		s.status = StatusScheduled
-	case now.Before(s.cfg.EndAt):
-		s.status = StatusActive
-	default:
-		s.status = StatusFinished
-	}
-
-	var startTimer *time.Timer
-	if s.status == StatusScheduled {
-		d := time.Until(s.cfg.StartAt)
-		if d < 0 {
-			d = 0
-		}
-		startTimer = time.NewTimer(d)
-	} else {
-		startTimer = time.NewTimer(0)
-		<-startTimer.C
-	}
-
-	var endTimer *time.Timer
-	dEnd := time.Until(s.cfg.EndAt)
-	if dEnd < 0 {
-		dEnd = 0
-	}
-	endTimer = time.NewTimer(dEnd)
-
+	s.status = s.initialStatus(time.Now())
+	startTimer := s.startTimer()
+	endTimer := time.NewTimer(nonNegativeDuration(time.Until(s.cfg.EndAt)))
 	if s.status == StatusFinished {
 		s.finishAndPersist()
 		return
@@ -236,46 +209,85 @@ func (s *Session) run() {
 
 	for {
 		select {
-
 		case <-startTimer.C:
-			if s.status == StatusScheduled && time.Now().Before(s.cfg.EndAt) {
-				s.startAndPersist()
-			}
+			s.handleStartTimer()
 
 		case <-endTimer.C:
-			if s.status != StatusFinished {
-				s.status = StatusFinished
-				s.updatedAt = time.Now()
-			}
+			s.markFinished()
 			s.finishAndPersist()
 			return
 
 		case msg := <-s.inbox:
-			switch m := msg.(type) {
-
-			case bidCmd:
-				s.handleBid(m)
-
-			case subscribeCmd:
-				s.handleSubscribe(m)
-
-			case unsubscribeCmd:
-				s.handleUnsubscribe(m)
-
-			case stopCmd:
-				if s.status == StatusActive {
-					s.status = StatusFinished
-					s.updatedAt = time.Now()
-					s.finishAndPersist()
-				} else if s.status == StatusScheduled {
-					s.closeAllSubs()
-				} else if s.status == StatusFinished {
-					s.closeAllSubs()
-				}
-				m.replyCh <- struct{}{}
+			if s.handleCommand(msg) {
 				return
 			}
 		}
+	}
+}
+
+func (s *Session) initialStatus(now time.Time) Status {
+	switch {
+	case now.Before(s.cfg.StartAt):
+		return StatusScheduled
+	case now.Before(s.cfg.EndAt):
+		return StatusActive
+	default:
+		return StatusFinished
+	}
+}
+
+func (s *Session) startTimer() *time.Timer {
+	if s.status == StatusScheduled {
+		return time.NewTimer(nonNegativeDuration(time.Until(s.cfg.StartAt)))
+	}
+
+	timer := time.NewTimer(0)
+	<-timer.C
+	return timer
+}
+
+func nonNegativeDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+func (s *Session) handleStartTimer() {
+	if s.status == StatusScheduled && time.Now().Before(s.cfg.EndAt) {
+		s.startAndPersist()
+	}
+}
+
+func (s *Session) handleCommand(msg any) bool {
+	switch m := msg.(type) {
+	case bidCmd:
+		s.handleBid(m)
+	case subscribeCmd:
+		s.handleSubscribe(m)
+	case unsubscribeCmd:
+		s.handleUnsubscribe(m)
+	case stopCmd:
+		s.handleStop(m)
+		return true
+	}
+	return false
+}
+
+func (s *Session) handleStop(cmd stopCmd) {
+	if s.status == StatusActive {
+		s.markFinished()
+		s.finishAndPersist()
+	} else {
+		s.closeAllSubs()
+	}
+	cmd.replyCh <- struct{}{}
+}
+
+func (s *Session) markFinished() {
+	if s.status != StatusFinished {
+		s.status = StatusFinished
+		s.updatedAt = time.Now()
 	}
 }
 

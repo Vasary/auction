@@ -15,7 +15,7 @@ func testUUID(v string) uuid.UUID {
 }
 
 type mockRepo struct {
-	auctions []PersistedAuction
+	auctions  []PersistedAuction
 	nextBidID int64
 }
 
@@ -203,32 +203,14 @@ func TestAuctionSessionFlow(t *testing.T) {
 	events, unsub := session.Subscribe()
 	defer unsub()
 
-	select {
-	case ev := <-events:
-		if ev.Type != EventSnapshot {
-			t.Errorf("expected EventSnapshot, got %v", ev.Type)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for EventSnapshot")
-	}
+	expectEvent(t, events, EventSnapshot, 2*time.Second)
 
 	if session.Status() != StatusActive {
 		t.Errorf("expected status Active, got %v", session.Status())
 	}
 
-	res := session.PlaceBid(testUUID("00000000-0000-0000-0000-000000000201"), testUUID("00000000-0000-0000-0000-000000000301"), 900)
-	if !res.Accepted {
-		t.Errorf("expected bid to be accepted, got error: %s", res.Error)
-	}
-
-	select {
-	case ev := <-events:
-		if ev.Type != EventPriceUpdated {
-			t.Errorf("expected EventPriceUpdated, got %v", ev.Type)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for EventPriceUpdated")
-	}
+	expectBidAccepted(t, session, "00000000-0000-0000-0000-000000000201", "00000000-0000-0000-0000-000000000301", 900)
+	expectEvent(t, events, EventPriceUpdated, 2*time.Second)
 
 	if session.currentPrice != 900 {
 		t.Errorf("expected price 900, got %d", session.currentPrice)
@@ -237,42 +219,61 @@ func TestAuctionSessionFlow(t *testing.T) {
 		t.Errorf("expected latest bid ID 1, got %d", session.latestBid.ID)
 	}
 
-	res = session.PlaceBid(testUUID("00000000-0000-0000-0000-000000000202"), testUUID("00000000-0000-0000-0000-000000000302"), 950)
-	if res.Accepted {
-		t.Error("expected bid 950 to be rejected")
-	}
-
-	res = session.PlaceBid(testUUID("00000000-0000-0000-0000-000000000202"), testUUID("00000000-0000-0000-0000-000000000302"), 850)
-	if res.Accepted {
-		t.Error("expected bid 850 to be rejected (step is 100)")
-	}
+	expectBidRejected(t, session, "00000000-0000-0000-0000-000000000202", "00000000-0000-0000-0000-000000000302", 950, "expected bid 950 to be rejected")
+	expectBidRejected(t, session, "00000000-0000-0000-0000-000000000202", "00000000-0000-0000-0000-000000000302", 850, "expected bid 850 to be rejected (step is 100)")
 
 	session.Stop()
-
-	select {
-	case ev := <-events:
-		if ev.Type != EventFinished {
-			t.Errorf("expected EventFinished, got %v", ev.Type)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for EventFinished")
-	}
+	expectEvent(t, events, EventFinished, 2*time.Second)
 
 	if session.Status() != StatusFinished {
 		t.Errorf("expected status Finished, got %v", session.Status())
 	}
 
-	res = session.PlaceBid(testUUID("00000000-0000-0000-0000-000000000201"), testUUID("00000000-0000-0000-0000-000000000301"), 700)
-	if res.Accepted {
-		t.Error("expected bid after finish to be rejected")
+	expectBidRejected(t, session, "00000000-0000-0000-0000-000000000201", "00000000-0000-0000-0000-000000000301", 700, "expected bid after finish to be rejected")
+
+	expectEventsClosed(t, events, 1*time.Second)
+}
+
+func expectEvent(t *testing.T, events <-chan Event, want EventType, timeout time.Duration) {
+	t.Helper()
+
+	select {
+	case ev := <-events:
+		if ev.Type != want {
+			t.Errorf("expected %v, got %v", want, ev.Type)
+		}
+	case <-time.After(timeout):
+		t.Fatalf("timed out waiting for %v", want)
 	}
+}
+
+func expectBidAccepted(t *testing.T, session *Session, companyID, personID string, amount int64) {
+	t.Helper()
+
+	res := session.PlaceBid(testUUID(companyID), testUUID(personID), amount)
+	if !res.Accepted {
+		t.Errorf("expected bid to be accepted, got error: %s", res.Error)
+	}
+}
+
+func expectBidRejected(t *testing.T, session *Session, companyID, personID string, amount int64, message string) {
+	t.Helper()
+
+	res := session.PlaceBid(testUUID(companyID), testUUID(personID), amount)
+	if res.Accepted {
+		t.Error(message)
+	}
+}
+
+func expectEventsClosed(t *testing.T, events <-chan Event, timeout time.Duration) {
+	t.Helper()
 
 	select {
 	case _, ok := <-events:
 		if ok {
 			t.Error("expected events channel to be closed")
 		}
-	case <-time.After(1 * time.Second):
+	case <-time.After(timeout):
 		t.Error("timed out waiting for events channel to close")
 	}
 }

@@ -42,80 +42,126 @@ func (h *Handler) CreateAuction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.TenderID == uuid.Nil || req.StartPrice <= 0 || req.Step <= 0 || req.CreatedBy == uuid.Nil {
+	persisted, now, ok := h.prepareAuction(w, req)
+	if !ok {
+		return
+	}
+
+	if err := h.AuctionRepo.Create(r.Context(), persisted); err != nil {
+		h.handleCreateAuctionError(w, err)
+		return
+	}
+
+	h.createSessionIfNeeded(persisted, now)
+	h.JSON(w, http.StatusCreated, newCreateAuctionResponse(persisted))
+}
+
+func (h *Handler) prepareAuction(w http.ResponseWriter, req createAuctionRequest) (*auction.PersistedAuction, time.Time, bool) {
+	if !validCreateAuctionInput(req) {
 		h.Error(w, http.StatusBadRequest, "invalid input", nil)
-		return
+		return nil, time.Time{}, false
 	}
 
-	startAt, err := time.Parse(time.RFC3339, req.StartAt)
-	if err != nil {
-		h.Error(w, http.StatusBadRequest, "invalid startAt format", err)
-		return
+	startAt, ok := h.parseAuctionTime(w, req.StartAt, "startAt")
+	if !ok {
+		return nil, time.Time{}, false
 	}
-
-	endAt, err := time.Parse(time.RFC3339, req.EndAt)
-	if err != nil {
-		h.Error(w, http.StatusBadRequest, "invalid endAt format", err)
-		return
-	}
-
-	if !endAt.After(startAt) {
-		h.Error(w, http.StatusBadRequest, "endAt must be after startAt", nil)
-		return
+	endAt, ok := h.parseAuctionTime(w, req.EndAt, "endAt")
+	if !ok {
+		return nil, time.Time{}, false
 	}
 
 	now := time.Now()
-	if endAt.Before(now) {
-		h.Error(w, http.StatusBadRequest, "endAt cannot be in the past", nil)
-		return
+	if !h.validAuctionWindow(w, startAt, endAt, now) {
+		return nil, time.Time{}, false
 	}
 
-	status := auction.StatusScheduled
-	if now.After(startAt) && now.Before(endAt) {
-		status = auction.StatusActive
-	}
-	if now.After(endAt) {
-		status = auction.StatusFinished
-	}
-
-	persisted := &auction.PersistedAuction{
+	return &auction.PersistedAuction{
 		TenderID:     req.TenderID,
 		StartPrice:   req.StartPrice,
 		Step:         req.Step,
 		StartAt:      startAt,
 		EndAt:        endAt,
 		CreatedBy:    req.CreatedBy,
-		Status:       status,
+		Status:       auctionStatusAt(now, startAt, endAt),
 		CurrentPrice: req.StartPrice,
 		WinnerID:     nil,
-	}
+	}, now, true
+}
 
-	if err := h.AuctionRepo.Create(r.Context(), persisted); err != nil {
-		if errors.Is(err, auction.ErrAlreadyExists) {
-			h.Error(w, http.StatusConflict, "auction already exists", err)
-			return
-		}
-		h.Error(w, http.StatusInternalServerError, "failed to save auction", err)
+func validCreateAuctionInput(req createAuctionRequest) bool {
+	return req.TenderID != uuid.Nil &&
+		req.StartPrice > 0 &&
+		req.Step > 0 &&
+		req.CreatedBy != uuid.Nil
+}
+
+func (h *Handler) parseAuctionTime(w http.ResponseWriter, value string, field string) (time.Time, bool) {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		h.Error(w, http.StatusBadRequest, "invalid "+field+" format", err)
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+func (h *Handler) validAuctionWindow(w http.ResponseWriter, startAt, endAt, now time.Time) bool {
+	if !endAt.After(startAt) {
+		h.Error(w, http.StatusBadRequest, "endAt must be after startAt", nil)
+		return false
+	}
+	if endAt.Before(now) {
+		h.Error(w, http.StatusBadRequest, "endAt cannot be in the past", nil)
+		return false
+	}
+	return true
+}
+
+func auctionStatusAt(now, startAt, endAt time.Time) auction.Status {
+	if now.After(startAt) && now.Before(endAt) {
+		return auction.StatusActive
+	}
+	if now.After(endAt) {
+		return auction.StatusFinished
+	}
+	return auction.StatusScheduled
+}
+
+func (h *Handler) handleCreateAuctionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, auction.ErrAlreadyExists) {
+		h.Error(w, http.StatusConflict, "auction already exists", err)
+		return
+	}
+	h.Error(w, http.StatusInternalServerError, "failed to save auction", err)
+}
+
+func (h *Handler) createSessionIfNeeded(persisted *auction.PersistedAuction, now time.Time) {
+	if !shouldCreateSession(persisted.StartAt, persisted.EndAt, now) {
 		return
 	}
 
-	if now.Before(endAt) && (now.After(startAt) || startAt.Sub(now) <= 5*time.Minute) {
-		cfg := auction.Config{
-			TenderID:           req.TenderID,
-			StartPrice:         req.StartPrice,
-			CurrentPrice:       req.StartPrice,
-			Step:               req.Step,
-			StartAt:            startAt,
-			EndAt:              endAt,
-			RateLimitPerBidder: 500 * time.Millisecond,
-			BroadcastBuffer:    64,
-		}
-		if _, err := h.Manager.Create(cfg); err != nil {
-			h.Logger.Error("failed to create auction session", zap.Error(err), zap.String("tender_id", req.TenderID.String()))
-		}
+	cfg := auction.Config{
+		TenderID:           persisted.TenderID,
+		StartPrice:         persisted.StartPrice,
+		CurrentPrice:       persisted.StartPrice,
+		Step:               persisted.Step,
+		StartAt:            persisted.StartAt,
+		EndAt:              persisted.EndAt,
+		RateLimitPerBidder: 500 * time.Millisecond,
+		BroadcastBuffer:    64,
 	}
+	if _, err := h.Manager.Create(cfg); err != nil {
+		h.Logger.Error("failed to create auction session", zap.Error(err), zap.String("tender_id", persisted.TenderID.String()))
+	}
+}
 
-	resp := createAuctionResponse{
+func shouldCreateSession(startAt, endAt, now time.Time) bool {
+	return now.Before(endAt) && (now.After(startAt) || startAt.Sub(now) <= 5*time.Minute)
+}
+
+func newCreateAuctionResponse(persisted *auction.PersistedAuction) createAuctionResponse {
+	now := time.Now()
+	return createAuctionResponse{
 		TenderID:     persisted.TenderID,
 		Status:       persisted.Status,
 		StartPrice:   persisted.StartPrice,
@@ -125,9 +171,7 @@ func (h *Handler) CreateAuction(w http.ResponseWriter, r *http.Request) {
 		StartAt:      persisted.StartAt,
 		EndAt:        persisted.EndAt,
 		CreatedBy:    persisted.CreatedBy,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
-
-	h.JSON(w, http.StatusCreated, resp)
 }
