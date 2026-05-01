@@ -24,17 +24,16 @@ The project is designed as a portfolio-grade example of backend engineering in G
 ## Architecture
 
 ```text
-cmd/server              application entrypoint and dependency wiring
-internal/auction        domain model, manager, in-memory sessions, bidding rules
-internal/http           REST API, WebSocket endpoint, static UI serving
-internal/scheduler      scheduled auction activation
-internal/db             PostgreSQL pool setup
-internal/auction/repository/postgres
-                        pgx-backed persistence
-internal/amqp           RabbitMQ connection and event publishing
-internal/metrics        Prometheus instrumentation
-ui                      React + TypeScript developer console
-docs                    architecture, business rules, metrics, and testing docs
+cmd/server                              application entrypoint and dependency wiring
+internal/auction                        domain model, manager, in-memory sessions, bidding rules
+internal/http                           REST API, WebSocket endpoint, static UI serving
+internal/scheduler                      scheduled auction activation
+internal/db                             PostgreSQL pool setup
+internal/auction/repository/postgres    pgx-backed persistence
+internal/amqp                           RabbitMQ connection and event publishing
+internal/metrics                        Prometheus instrumentation
+ui                                      React + TypeScript developer console
+docs                                    architecture, business rules, metrics, and testing docs
 ```
 
 ## Documentation
