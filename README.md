@@ -3,6 +3,7 @@
 [![CI](https://github.com/Vasary/auction/actions/workflows/container.yml/badge.svg?branch=main)](https://github.com/Vasary/auction/actions/workflows/container.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Vasary/auction)](https://goreportcard.com/report/github.com/Vasary/auction)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/Vasary/auction?filename=go.mod)](go.mod)
+[![License](https://img.shields.io/badge/license-attribution_required-blue)](LICENSE)
 
 Auction Core is a production-minded Go service for real-time reverse auctions. It combines a clean domain core, WebSocket bidding, PostgreSQL persistence, RabbitMQ domain events, Prometheus metrics, and a React developer console for manual and functional testing.
 
@@ -123,6 +124,10 @@ make docker-build  # build the Docker image
 ## CI and Delivery
 
 The `Container` GitHub Actions workflow runs on pushes and pull requests for `main` and `master`. It executes `go test ./...` first; the container build only runs after the test job succeeds. On non-PR events, the Docker image is published to GitHub Container Registry with branch, tag, semantic version, SHA, and `latest` tags where applicable.
+
+## License
+
+This project is available under an attribution-required license. You may use, copy, modify, and distribute the code, but public use or redistribution must include visible credit and a link to [Viktor Gievoi](https://github.com/Vasary). See [LICENSE](LICENSE) for details.
 
 ## Why This Project Matters
 
