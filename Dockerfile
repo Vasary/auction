@@ -18,25 +18,17 @@ ARG TARGETARCH
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags='-s -w' -o /out/auction-server ./cmd/server
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags='-s -w' -o /out/healthcheck ./cmd/healthcheck
 
-FROM alpine:3.21 AS runtime-deps
-RUN apk add --no-cache ca-certificates tzdata && \
-    addgroup -g 10001 -S app && adduser -u 10001 -S -G app app
-
-FROM scratch AS runtime
+FROM alpine:3.21 AS runtime
 WORKDIR /app
-COPY --from=runtime-deps /etc/passwd /etc/passwd
-COPY --from=runtime-deps /etc/group /etc/group
-COPY --from=runtime-deps /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=runtime-deps /usr/share/zoneinfo /usr/share/zoneinfo
+ENV PORT=8082
+RUN apk add --no-cache ca-certificates curl tzdata && \
+    addgroup -g 10001 -S app && adduser -u 10001 -S -G app app
 COPY --from=go-builder --chown=10001:10001 /out/auction-server /app/auction-server
-COPY --from=go-builder --chown=10001:10001 /out/healthcheck /app/healthcheck
 COPY --from=ui-builder --chown=10001:10001 /src/ui/dist /app/ui/dist
 USER 10001:10001
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD ["/app/healthcheck"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${PORT:-8082}/health" || exit 1
 EXPOSE 8082
 ENTRYPOINT ["/app/auction-server"]
